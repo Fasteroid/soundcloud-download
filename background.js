@@ -13,6 +13,7 @@ chrome.webRequest.onBeforeRequest.addListener((details) => {
     if (!details.requestBody?.raw) return
     const decoder = new TextDecoder("utf-8")
     const json = JSON.parse(decoder.decode(details.requestBody.raw[0].bytes))
+    console.log(json.auth_token)
     authToken = json.auth_token
   }
 }, {urls: ["https://*.soundcloud.com/*"]}, ["requestBody"])
@@ -67,7 +68,9 @@ const downloadM3U = async (url) => {
 }
 
 const getDownloadURL = async (track, album) => {
+
     let url = track.media.transcodings.find((t) => t.format.mime_type === "audio/mpeg" && t.format.protocol === "progressive")?.url
+
     if (!url) {
       url = track.media.transcodings.find((t) => t.format.mime_type === "audio/mpeg" && t.format.protocol === "hls")?.url
       url += url.includes("secret_token") ? `&client_id=${clientID}` : `?client_id=${clientID}`
@@ -75,35 +78,57 @@ const getDownloadURL = async (track, album) => {
       const m3u = await fetch(url, {headers: {"Authorization": `OAuth ${authToken}`}}).then((r) => r.json()).then((m) => m.url)
       return downloadM3U(m3u)
     }
+
     url += url.includes("secret_token") ? `&client_id=${clientID}` : `?client_id=${clientID}`
     const mp3 = await fetch(url).then((r) => r.json()).then((m) => m.url)
-    const arrayBuffer = await fetch(mp3).then((r) => r.arrayBuffer())
-    let artwork = track.artwork_url ? track.artwork_url : track.user.avatar_url
-    artwork = artwork.replace("-large", "-t500x500")
-    const imageBuffer = await fetch(artwork).then((r) => r.arrayBuffer())
-    const writer = new ID3Writer(arrayBuffer)
-    writer.setFrame("TIT2", track.title)
-        .setFrame("TPE1", [track.user.username])
-        .setFrame("TLEN", track.duration)
-        .setFrame("TYER", new Date(track.created_at).getFullYear())
-        .setFrame("TCON", [track.genre])
-        .setFrame("COMM", {
-          description: "Description",
-          text: track.description ?? "",
-          language: "eng"
-        })
-        .setFrame("APIC", {
-          type: 3,
-          data: imageBuffer,
-          description: track.title,
-          useUnicodeEncoding: false
+    console.log(`MP3 for ${track.title} received`)
+
+    return fetch(mp3).then((r) => r.arrayBuffer()).then(arrayBuffer => {
+
+      let artwork = track.artwork_url ? track.artwork_url : track.user.avatar_url
+      artwork = artwork.replace("-large", "-t500x500")
+      return fetch(artwork).then((r) => r.arrayBuffer()).then(imageBuffer => {
+
+        console.log(`Track art for ${track.title} received`)
+        const writer = new ID3Writer(arrayBuffer)
+
+        let authors = [track.user.username]
+        let title   = track.title
+        const results = title.match(/(.+) - (.+)/)
+
+        if( results ){
+          if( results[1] != authors[0] ){
+            authors.push(results[1]); // add additional author
+          }
+          console.log("Track '" + title + "' contained an artist's name; removing...")
+          title = results[2];
+        }
+
+        writer.setFrame("TIT2", title)
+            .setFrame("TPE1", authors)
+            .setFrame("TLEN", track.duration)
+            .setFrame("TYER", new Date(track.created_at).getFullYear())
+            .setFrame("TCON", [track.genre])
+            .setFrame("COMM", {
+              description: "Description",
+              text: track.description ?? "",
+              language: "eng"
+            })
+            .setFrame("APIC", {
+              type: 3,
+              data: imageBuffer,
+              description: title,
+              useUnicodeEncoding: false
+          })
+        if (album) {
+          writer.setFrame("TALB", album)
+                .setFrame("TPE2", track.user.username)
+        }
+        writer.addTag()
+        return writer.getURL()
       })
-    if (album) {
-      writer.setFrame("TALB", album)
-            .setFrame("TPE2", track.user.username)
-    }
-    writer.addTag()
-    return writer.getURL()
+    })
+
 }
 
 const getArtURL = (track) => {
@@ -126,6 +151,24 @@ const setIcon = () => {
       chrome.browserAction.setIcon({path: "assets/icon-off.png"})
     }
   }
+}
+
+async function processTrack(track, playlist){
+
+  if( track.id === undefined ){ return }
+
+  return fetch(`https://api-v2.soundcloud.com/tracks/soundcloud:tracks:${track.id}?client_id=${clientID}`)
+    .then(res => res.json())
+    .then(trackData => {
+      track = trackData;
+      console.log(`Fetched data for ${track.title}`)
+      return (coverArt ? getArtURL(track) : getDownloadURL(track, playlist.title))
+    })
+    .then( url => {
+      const filename = `${clean(track.title)}.${coverArt ? "jpg" : "mp3"}`.trim()
+      chrome.downloads.download({url: url, filename: `${clean(playlist.title)}/${filename}`, conflictAction: "overwrite"})
+    })
+  
 }
 
 chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
@@ -169,20 +212,17 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     }
 
     if (request.message === "download-playlist") {
+
       const playlist = request.playlist
-      for (let i = 0; i < playlist.tracks.length; i++) {
-        if (!playlist.tracks[i].media) playlist.tracks[i] = await fetch(`https://api-v2.soundcloud.com/tracks/soundcloud:tracks:${playlist.tracks[i].id}?client_id=${clientID}`).then(r => r.json())
+
+      const wait = [];
+      let n = 0;
+      for( track of playlist.tracks ){
+        wait[n] = processTrack(track, playlist);
+        n++;
       }
-      for (let i = 0; i < playlist.tracks.length; i++) {
-        try {
-          const url = coverArt ? getArtURL(playlist.tracks[i]) : await getDownloadURL(playlist.tracks[i], playlist.title)
-          const filename = `${clean(playlist.tracks[i].title)}.${coverArt ? "jpg" : "mp3"}`.trim()
-          if (url) chrome.downloads.download({url, filename: `${clean(playlist.title)}/${filename}`, conflictAction: "overwrite"})
-        } catch (e) {
-          console.log(e)
-          continue
-        }
-      }
+      await Promise.all(wait)
+
       if (request.href) {
         chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
           chrome.tabs.sendMessage(tabs[0].id, {message: "clear-spinner", href: request.href})
