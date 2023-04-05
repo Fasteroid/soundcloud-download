@@ -13,6 +13,7 @@ chrome.webRequest.onBeforeRequest.addListener((details) => {
     if (!details.requestBody?.raw) return
     const decoder = new TextDecoder("utf-8")
     const json = JSON.parse(decoder.decode(details.requestBody.raw[0].bytes))
+    console.log(json.auth_token)
     authToken = json.auth_token
   }
 }, {urls: ["https://*.soundcloud.com/*"]}, ["requestBody"])
@@ -67,6 +68,7 @@ const downloadM3U = async (url) => {
 }
 
 const getDownloadURL = async (track, album) => {
+    console.log(`Processing ${track.title}`)
     let url = track.media.transcodings.find((t) => t.format.mime_type === "audio/mpeg" && t.format.protocol === "progressive")?.url
     if (!url) {
       url = track.media.transcodings.find((t) => t.format.mime_type === "audio/mpeg" && t.format.protocol === "hls")?.url
@@ -77,13 +79,28 @@ const getDownloadURL = async (track, album) => {
     }
     url += url.includes("secret_token") ? `&client_id=${clientID}` : `?client_id=${clientID}`
     const mp3 = await fetch(url).then((r) => r.json()).then((m) => m.url)
+    console.log(`MP3 for ${track.title} received`)
     const arrayBuffer = await fetch(mp3).then((r) => r.arrayBuffer())
     let artwork = track.artwork_url ? track.artwork_url : track.user.avatar_url
     artwork = artwork.replace("-large", "-t500x500")
     const imageBuffer = await fetch(artwork).then((r) => r.arrayBuffer())
+    console.log(`Track art for ${track.title} received`)
     const writer = new ID3Writer(arrayBuffer)
-    writer.setFrame("TIT2", track.title)
-        .setFrame("TPE1", [track.user.username])
+
+    let authors = [track.user.username]
+    let title   = track.title
+    const results = title.match(/(.+) - (.+)/)
+
+    if( results ){
+      if( results[1] != authors[0] ){
+        authors.push(results[1]); // add additional author
+      }
+      console.log("Track '" + title + "' contained an artist's name; removing...")
+      title = results[2];
+    }
+
+    writer.setFrame("TIT2", title)
+        .setFrame("TPE1", authors)
         .setFrame("TLEN", track.duration)
         .setFrame("TYER", new Date(track.created_at).getFullYear())
         .setFrame("TCON", [track.genre])
@@ -95,7 +112,7 @@ const getDownloadURL = async (track, album) => {
         .setFrame("APIC", {
           type: 3,
           data: imageBuffer,
-          description: track.title,
+          description: title,
           useUnicodeEncoding: false
       })
     if (album) {
@@ -172,16 +189,13 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
       const playlist = request.playlist
       for (let i = 0; i < playlist.tracks.length; i++) {
         if (!playlist.tracks[i].media) playlist.tracks[i] = await fetch(`https://api-v2.soundcloud.com/tracks/soundcloud:tracks:${playlist.tracks[i].id}?client_id=${clientID}`).then(r => r.json())
+        console.log(`Getting ${playlist.tracks[i].title}`)
       }
-      for (let i = 0; i < playlist.tracks.length; i++) {
-        try {
-          const url = coverArt ? getArtURL(playlist.tracks[i]) : await getDownloadURL(playlist.tracks[i], playlist.title)
-          const filename = `${clean(playlist.tracks[i].title)}.${coverArt ? "jpg" : "mp3"}`.trim()
-          if (url) chrome.downloads.download({url, filename: `${clean(playlist.title)}/${filename}`, conflictAction: "overwrite"})
-        } catch (e) {
-          console.log(e)
-          continue
-        }
+      // nuclear download is funnier
+      const urlArray = await Promise.all(playlist.tracks.map((t) => coverArt ? getArtURL(t) : getDownloadURL(t, playlist.title)))
+      for (let i = 0; i < urlArray.length; i++) {
+        const filename = `${clean(playlist.tracks[i].title)}.${coverArt ? "jpg" : "mp3"}`.trim()
+        if (urlArray[i]) chrome.downloads.download({url: urlArray[i], filename: `${clean(playlist.title)}/${filename}`, conflictAction: "overwrite"})
       }
       if (request.href) {
         chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
