@@ -8,7 +8,7 @@ let clientID = ""
 let trackAuth = ""
 let authToken = ""
 
-let ignoredTracks = JSON.parse( localStorage.getItem("sc_ignored_tracks") || "[]" );
+let ignoredTracks = JSON.parse( localStorage.getItem("sc_ignored_tracks") || "{}" );
 
 window.ignoreTrack = (id, status) => {
   id = "_" + id;
