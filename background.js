@@ -66,7 +66,7 @@ chrome.webRequest.onSendHeaders.addListener((details) => {
 }, {urls: ["https://*.soundcloud.com/*"]})
 
 const clean = (text) => {
-  return text?.replace(/[^a-z0-9_-\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf【】()\[\]&!#. ]/gi, "").replace(/~/g, "").replace(/ +/g, " ") ?? "invalid_file"
+  return text?.replace(/[^a-z0-9_-\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf【】\u200e()\[\]&!#. ]/gi, "").replace(/~/g, "").replace(/ +/g, " ") ?? "invalid_file"
 }
 
 const downloadM3U = async (url) => {
@@ -83,7 +83,7 @@ const getDownloadURL = async (track, album) => {
 
   if( ignoredTracks["_" + track.id] ){ 
     console.warn(`Refusing to download track ${track.title} [${track.id}] as it is on the ignore list!`);
-    throw "ignored"
+    return ""
   }
   else {
     console.log(`Preparing to download track ${track.title} [${track.id}]`)
@@ -188,6 +188,7 @@ async function processTrack(track, playlist){
       return (coverArt ? getArtURL(track) : getDownloadURL(track, playlist.title))
     })
     .then( url => {
+      if( url == "" ){ return }
       const filename = `${clean(track.title)}.${coverArt ? "jpg" : "mp3"}`.trim()
       chrome.downloads.download({url: url, filename: `${clean(playlist.title)}/${filename}`, conflictAction: "overwrite"})
     })
@@ -199,15 +200,8 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     if (request.message === "download-track") {
       const track = request.track
 
-      if( ignoredTracks["_" + track.id] ){ 
-        console.warn(`Refusing to download track ${track.title} [${track.id}] as it is on the ignore list!`);
-        throw "ignored"
-      }
-      else {
-        console.log(`Preparing to download track ${track.title} [${track.id}]`)
-      }
-
       const url = coverArt ? getArtURL(track) : await getDownloadURL(track)
+      if( url == "" ){ return }
       const filename = `${clean(track.title)}.${coverArt ? "jpg" : "mp3"}`.trim()
       if (url) chrome.downloads.download({url, filename, conflictAction: "overwrite"})
       if (request.href) {
