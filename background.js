@@ -198,6 +198,15 @@ async function processTrack(track, playlist){
 chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     if (request.message === "download-track") {
       const track = request.track
+
+      if( ignoredTracks["_" + track.id] ){ 
+        console.warn(`Refusing to download track ${track.title} [${track.id}] as it is on the ignore list!`);
+        throw "ignored"
+      }
+      else {
+        console.log(`Preparing to download track ${track.title} [${track.id}]`)
+      }
+
       const url = coverArt ? getArtURL(track) : await getDownloadURL(track)
       const filename = `${clean(track.title)}.${coverArt ? "jpg" : "mp3"}`.trim()
       if (url) chrome.downloads.download({url, filename, conflictAction: "overwrite"})
@@ -266,7 +275,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
         chrome.tabs.sendMessage(tabs[0].id, {message: "update-state", state: request.state, coverArt: request.coverArt})
       })
     }
-}).catch(() => {})
+})
 
 let historyUrl = ""
 
