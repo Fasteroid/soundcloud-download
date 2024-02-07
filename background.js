@@ -8,6 +8,18 @@ let clientID = ""
 let trackAuth = ""
 let authToken = ""
 
+let ignoredTracks = JSON.parse( localStorage.getItem("sc_ignored_tracks") || "[]" );
+
+window.ignoreTrack = (id, status) => {
+  id = "_" + id;
+  if( status )
+    ignoredTracks[id] = true
+  else
+    delete ignoredTracks[id]
+
+  localStorage.setItem( "sc_ignored_tracks", JSON.stringify(ignoredTracks) )
+}
+
 chrome.webRequest.onBeforeRequest.addListener((details) => {
   if (details.url.includes("soundcloud.com/me")) {
     if (!details.requestBody?.raw) return
@@ -54,7 +66,7 @@ chrome.webRequest.onSendHeaders.addListener((details) => {
 }, {urls: ["https://*.soundcloud.com/*"]})
 
 const clean = (text) => {
-  return text?.replace(/[^a-z0-9_-\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf【】()\[\]&!#. ]/gi, "").replace(/~/g, "").replace(/ +/g, " ") ?? ""
+  return text?.replace(/[^a-z0-9_-\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf【】()\[\]&!#. ]/gi, "").replace(/~/g, "").replace(/ +/g, " ") ?? "invalid_file"
 }
 
 const downloadM3U = async (url) => {
@@ -69,65 +81,73 @@ const downloadM3U = async (url) => {
 
 const getDownloadURL = async (track, album) => {
 
-    let url = track.media.transcodings.find((t) => t.format.mime_type === "audio/mpeg" && t.format.protocol === "progressive")?.url
+  if( ignoredTracks["_" + track.id] ){ 
+    console.warn(`Refusing to download track ${track.title} [${track.id}] as it is on the ignore list!`);
+    throw "ignored"
+  }
+  else {
+    console.log(`Preparing to download track ${track.title} [${track.id}]`)
+  }
 
-    if (!url) {
-      url = track.media.transcodings.find((t) => t.format.mime_type === "audio/mpeg" && t.format.protocol === "hls")?.url
-      url += url.includes("secret_token") ? `&client_id=${clientID}` : `?client_id=${clientID}`
-      if (trackAuth) url += `&track_authorization=${trackAuth}`
-      const m3u = await fetch(url, {headers: {"Authorization": `OAuth ${authToken}`}}).then((r) => r.json()).then((m) => m.url)
-      return downloadM3U(m3u)
-    }
+  let url = track.media.transcodings.find((t) => t.format.mime_type === "audio/mpeg" && t.format.protocol === "progressive")?.url
 
+  if (!url) {
+    url = track.media.transcodings.find((t) => t.format.mime_type === "audio/mpeg" && t.format.protocol === "hls")?.url
     url += url.includes("secret_token") ? `&client_id=${clientID}` : `?client_id=${clientID}`
-    const mp3 = await fetch(url).then((r) => r.json()).then((m) => m.url)
-    console.log(`MP3 for ${track.title} received`)
+    if (trackAuth) url += `&track_authorization=${trackAuth}`
+    const m3u = await fetch(url, {headers: {"Authorization": `OAuth ${authToken}`}}).then((r) => r.json()).then((m) => m.url)
+    return downloadM3U(m3u)
+  }
 
-    return fetch(mp3).then((r) => r.arrayBuffer()).then(arrayBuffer => {
+  url += url.includes("secret_token") ? `&client_id=${clientID}` : `?client_id=${clientID}`
+  const mp3 = await fetch(url).then((r) => r.json()).then((m) => m.url)
+  console.log(`MP3 for ${track.title} received`)
 
-      let artwork = track.artwork_url ? track.artwork_url : track.user.avatar_url
-      artwork = artwork.replace("-large", "-t500x500")
-      return fetch(artwork).then((r) => r.arrayBuffer()).then(imageBuffer => {
+  return fetch(mp3).then((r) => r.arrayBuffer()).then(arrayBuffer => {
 
-        console.log(`Track art for ${track.title} received`)
-        const writer = new ID3Writer(arrayBuffer)
+    let artwork = track.artwork_url ? track.artwork_url : track.user.avatar_url
+    artwork = artwork.replace("-large", "-t500x500")
+    return fetch(artwork).then((r) => r.arrayBuffer()).then(imageBuffer => {
 
-        let authors = [track.user.username]
-        let title   = track.title
-        const results = title.match(/(.+) - (.+)/)
+      console.log(`Track art for ${track.title} received`)
+      const writer = new ID3Writer(arrayBuffer)
 
-        if( results ){
-          if( results[1] != authors[0] ){
-            authors.push(results[1]); // add additional author
-          }
-          console.log("Track '" + title + "' contained an artist's name; removing...")
-          title = results[2];
+      let authors = [track.user.username]
+      let title   = track.title
+      const results = title.match(/(.+) - (.+)/)
+
+      if( results ){
+        if( results[1] != authors[0] ){
+          authors.push(results[1]); // add additional author
         }
+        console.log("Track '" + title + "' contained an artist's name; removing...")
+        title = results[2];
+      }
 
-        writer.setFrame("TIT2", title)
-            .setFrame("TPE1", authors)
-            .setFrame("TLEN", track.duration)
-            .setFrame("TYER", new Date(track.created_at).getFullYear())
-            .setFrame("TCON", [track.genre])
-            .setFrame("COMM", {
-              description: "Description",
-              text: track.description ?? "",
-              language: "eng"
-            })
-            .setFrame("APIC", {
-              type: 3,
-              data: imageBuffer,
-              description: title,
-              useUnicodeEncoding: false
+      writer.setFrame("TIT2", title)
+          .setFrame("TPE1", authors)
+          .setFrame("TLEN", track.duration)
+          .setFrame("TYER", new Date(track.created_at).getFullYear())
+          .setFrame("TCON", [track.genre])
+          .setFrame("COMM", {
+            description: "Description",
+            text: track.description ?? "",
+            language: "eng"
           })
-        if (album) {
-          writer.setFrame("TALB", album)
-                .setFrame("TPE2", track.user.username)
-        }
-        writer.addTag()
-        return writer.getURL()
-      })
+          .setFrame("APIC", {
+            type: 3,
+            data: imageBuffer,
+            description: title,
+            useUnicodeEncoding: false
+        })
+      if (album) {
+        writer.setFrame("TALB", album)
+              .setFrame("TPE2", track.user.username)
+      }
+      writer.addTag()
+      return writer.getURL()
     })
+  })
 
 }
 
@@ -155,7 +175,10 @@ const setIcon = () => {
 
 async function processTrack(track, playlist){
 
-  if( track.id === undefined ){ return }
+  if( track === undefined ){ 
+    console.error("wtf track didn't exist???")
+    return 
+  }
 
   return fetch(`https://api-v2.soundcloud.com/tracks/soundcloud:tracks:${track.id}?client_id=${clientID}`)
     .then(res => res.json())
@@ -168,6 +191,7 @@ async function processTrack(track, playlist){
       const filename = `${clean(track.title)}.${coverArt ? "jpg" : "mp3"}`.trim()
       chrome.downloads.download({url: url, filename: `${clean(playlist.title)}/${filename}`, conflictAction: "overwrite"})
     })
+    .catch(() => {})
   
 }
 
@@ -242,7 +266,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
         chrome.tabs.sendMessage(tabs[0].id, {message: "update-state", state: request.state, coverArt: request.coverArt})
       })
     }
-})
+}).catch(() => {})
 
 let historyUrl = ""
 
