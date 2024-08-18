@@ -25,7 +25,8 @@ window.ignoreTrack = async (id, status = true) => {
 
   try { // did I pass a URL directly?
     let data = await parseHTML(id)
-    id = data.id;
+    if( data.id )
+      id = data.id;
   }
   catch(e){}
 
