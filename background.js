@@ -30,10 +30,14 @@ window.ignoreTrack = async (id, status = true) => {
   catch(e){}
 
   id = "_" + id;
-  if( status )
+  if( status ){
+    console.log(`Adding track ${id} to the ignore list`)
     ignoredTracks[id] = true
-  else
+  }
+  else {
+    console.log(`Removing track ${id} from the ignore list`)
     delete ignoredTracks[id]
+  }
 
   localStorage.setItem( "sc_ignored_tracks", JSON.stringify(ignoredTracks) )
 }
