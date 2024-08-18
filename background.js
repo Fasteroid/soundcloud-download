@@ -10,7 +10,25 @@ let authToken = ""
 
 let ignoredTracks = JSON.parse( localStorage.getItem("sc_ignored_tracks") || "{}" );
 
-window.ignoreTrack = (id, status) => {
+const parseHTML = async (url) => {
+  const html = await fetch(url).then((r) => r.text())
+  const json = JSON.parse(html.match(/(\[{)(.*)(?=;)/gm)[0])
+  const parsed = json[json.length - 1].data
+  return parsed
+}
+
+window.parseTrack = async (url) => {
+  return parseHTML(url)
+}
+
+window.ignoreTrack = async (id, status) => {
+
+  try { // did I pass a URL directly?
+    let data = await parseHTML(id)
+    id = data.id;
+  }
+  catch(e){}
+
   id = "_" + id;
   if( status )
     ignoredTracks[id] = true
@@ -141,8 +159,8 @@ const getDownloadURL = async (track, album, num) => {
             useUnicodeEncoding: false
         })
       if (album) {
-        writer.setFrame("TALB", album)
-              .setFrame("TRCK", num)
+        writer.setFrame("TALB", `末.${album}.${num}`) // Due to a samsung music bug, in order to get the proper track art to display, no two albums can have the same name.
+              .setFrame("TRCK", num)                  // In addition, we use the japanese character for "end" (末) to ensure that these forced albums are always at the bottom of the list.
               .setFrame("TPE2", "Fasteroid")
       }
       writer.addTag()
@@ -192,7 +210,7 @@ async function processTrack(track, playlist, num){
       if( url == "" ){ return }
       const cleanTitle = clean(track.title);
       const filename = `${clean(track.title)}.${coverArt ? "jpg" : "mp3"}`.trim()
-      chrome.downloads.download({url: url, filename: `${clean(playlist.title)}/${cleanTitle}/${filename}`, conflictAction: "overwrite"}) // thanks for being retarded, Samsung Music!
+      chrome.downloads.download({url: url, filename: `${clean(playlist.title)}/${filename}`, conflictAction: "overwrite"}) // thanks for being retarded, Samsung Music!
     })
     .catch(() => {})
   
