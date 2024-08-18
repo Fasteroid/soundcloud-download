@@ -17,18 +17,19 @@ const parseHTML = async (url) => {
   return parsed
 }
 
-window.parseTrack = async (url) => {
-  return parseHTML(url)
-}
 
 window.ignoreTrack = async (id, status = true) => {
 
-  try { // did I pass a URL directly?
-    let data = await parseHTML(id)
-    if( data.id )
-      id = data.id;
+  if( !(id + "").match(/^[0-9]+$/) ){
+    let track = await parseHTML(id);
+
+    if( !track.id ){
+      console.error("Failed to parse track ID from URL: " + id);
+      return;
+    }
+
+    id = track.id;
   }
-  catch(e){}
 
   id = "_" + id;
   if( status ){
