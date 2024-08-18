@@ -21,7 +21,7 @@ window.parseTrack = async (url) => {
   return parseHTML(url)
 }
 
-window.ignoreTrack = async (id, status) => {
+window.ignoreTrack = async (id, status = true) => {
 
   try { // did I pass a URL directly?
     let data = await parseHTML(id)
