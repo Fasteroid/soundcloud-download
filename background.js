@@ -90,7 +90,7 @@ chrome.webRequest.onSendHeaders.addListener((details) => {
 }, {urls: ["https://*.soundcloud.com/*"]})
 
 const clean = (text) => {
-  return text?.replace(/[^a-z0-9_-\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf【】\u200e()\[\]&!#. \|]/gi, "").replace(/~/g, "").replace(/ +/g, " ") ?? "invalid_file"
+  return text?.replace(/[^a-z0-9_-\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf【】\u200e()\[\]&!#. ]/gi, "").replace(/~/g, "").replace(/ +/g, " ") ?? "invalid_file"
 }
 
 const downloadM3U = async (url) => {
@@ -103,7 +103,7 @@ const downloadM3U = async (url) => {
   return output.url
 }
 
-const getDownloadURL = async (track, album, num) => {
+const getDownloadURL = async (track, album) => {
 
   if( ignoredTracks["_" + track.id] ){ 
     console.warn(`Refusing to download track ${track.title} [${track.id}] as it is on the ignore list!`);
@@ -165,9 +165,8 @@ const getDownloadURL = async (track, album, num) => {
             useUnicodeEncoding: false
         })
       if (album) {
-        writer.setFrame("TALB", `末.${album}.${num}`) // Due to a samsung music bug, in order to get the proper track art to display, no two albums can have the same name.
-              .setFrame("TRCK", num)                  // In addition, we use the japanese character for "end" (末) to ensure that these forced albums are always at the bottom of the list.
-              .setFrame("TPE2", "Fasteroid")
+        writer.setFrame("TALB", album)
+              .setFrame("TPE2", track.user.username)
       }
       writer.addTag()
       return writer.getURL()
@@ -198,7 +197,7 @@ const setIcon = () => {
   }
 }
 
-async function processTrack(track, playlist, num){
+async function processTrack(track, playlist){
 
   if( track === undefined ){ 
     console.error("wtf track didn't exist???")
@@ -210,13 +209,12 @@ async function processTrack(track, playlist, num){
     .then(trackData => {
       track = trackData;
       console.log(`Fetched data for ${track.title}`)
-      return (coverArt ? getArtURL(track) : getDownloadURL(track, playlist.title, num))
+      return (coverArt ? getArtURL(track) : getDownloadURL(track, playlist.title))
     })
     .then( url => {
       if( url == "" ){ return }
-      const cleanTitle = clean(track.title);
       const filename = `${clean(track.title)}.${coverArt ? "jpg" : "mp3"}`.trim()
-      chrome.downloads.download({url: url, filename: `${clean(playlist.title)}/${filename}`, conflictAction: "overwrite"}) // thanks for being retarded, Samsung Music!
+      chrome.downloads.download({url: url, filename: `${clean(playlist.title)}/${filename}`, conflictAction: "overwrite"})
     })
     .catch(() => {})
   
@@ -271,7 +269,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
       const wait = [];
       let n = 0;
       for( track of playlist.tracks ){
-        wait[n] = processTrack(track, playlist, n+1);
+        wait[n] = processTrack(track, playlist);
         n++;
       }
       await Promise.all(wait)
